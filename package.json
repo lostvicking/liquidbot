@@ -1,0 +1,26 @@
+{
+  "name": "sfbbot",
+  "version": "1.0.0",
+  "description": "Skype for Business Bot",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "botbuilder": "^3.13.0",
+    "buildmail": "^4.0.1",
+    "dateformat": "^3.0.2",
+    "gmail-send": "^1.2.11",
+    "google-auth-library": "^0.12.0",
+    "googleapis": "^23.0.0",
+    "inquirer": "^4.0.1",
+    "js-base64": "^2.4.0",
+    "parse-json": "^4.0.0",
+    "request-promise": "^4.2.2",
+    "restify": "^6.3.4",
+    "then-request": "^4.1.0",
+    "watson-developer-cloud": "^2.42.0"
+  }
+}
