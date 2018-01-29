@@ -2,6 +2,7 @@ var restify = require('restify');
 var builder = require('botbuilder');
 var dateFormat = require('dateformat');
 
+
 // Watson conversation
 var ConversationV1 = require('watson-developer-cloud/conversation/v1');
 
@@ -42,35 +43,18 @@ var bot = new builder.UniversalBot(connector, [
           console.error('No results back from welcomeDialog')
         }
 
-    },
-    // gather studio visit info
-    function (session, results, next) {
-      if(session.dialogData.time) {
-        console.log('========== Time has been set to ', session.dialogData.time)
-      }
-
-
-      if (results.response) {
-        console.log('intentIdentificationDialog results:', results.respsonse)
-        //session.beginDialog('gatherStudioVisitInfo', results.respsonse)
-      } else {
-        console.error('No results back from intentIdentificationDialog')
-      }
-    },
-    function (session, results, next) {
-      session.endConversation('Goodbye!')
     }
-    // send notification
 ]);
 
 // use args param to send welcome message to user
 bot.dialog('welcomeDialog', [
     function(session, args, next) {
         conversation.message({
-            input: {'text': session.message.text}
+            input: {'text': 'Hello'}
         },  function(err, response) {
-          console.log('****************', JSON.stringify(response, null, 2), '****************');
-
+          if (err) {
+            console.error(err); // something went wrong
+          }
             // intent detection
             if (response.intents.length > 0 && response.intents[0].intent === 'Greeting') {
                 session.send(response.output.text)
@@ -85,45 +69,37 @@ bot.dialog('welcomeDialog', [
 
 // return watson context if intent correctly identified as RequestStudioVisit
 // otherwise sit here until we identify the intent correctly
-bot.dialog('intentIdentificationDialog',
-    function (session, args, next) {
-      var msg = new builder.Message(session);
-      msg.attachments([
-        new builder.HeroCard(session)
-               .text("Would you like to book a visit to the Studio?")
-               .buttons([
-                   builder.CardAction.imBack(session, "I want to visit Liquid Studio", "yes"),
-                   builder.CardAction.imBack(session, "don't book visit", "no")
-               ])
-      ]);
-      session.send(msg).endDialog();
+bot.dialog('intentIdentificationDialog',[
+    function (session, args) {
+      builder.Prompts.choice(session, "Would you like to request a visit to Liquid Studio Stockholm?", "Yes|No", { listStyle: builder.ListStyle.button })
+    }, function (session, results, next) {
+      console.log('Visist request prompt results:', results)
+      if (results.response.entity === 'Yes') {
+        session.beginDialog('visitStudioIntent')
+      } else {
+        session.endConversation()
+      }
     }
-)
+]);
 
 bot.dialog('visitStudioIntent', function (session, args, next) {
   var watsonContext = ''
   var datePrompt = ''
   conversation.message({
-      input: {'text': session.message.text},
+      input: {'text': 'I want to visit Liquid Studio'},
       context: args
   },  function(err, response) {
       if (err)
           console.log('error:', err);
       else
-          console.log('Message text is: ' + session.message.text, '---------------------', JSON.stringify(response, null, 2), '---------------------');
+          console.log(JSON.stringify(response, null, 2));
 
       // intent detection
       if (response.intents.length > 0 && response.intents[0].intent === 'RequestStudioVisit') {
           watsonContext = response.context
           datePrompt = response.output.text[0]
-          console.log('We are returning the following tings', response.context, response.output.text[0])
           session.conversationData.watsonContext = response.context
-          console.log('persisted watson context as:', session.conversationData.watsonContext)
-          //session.endDialogWithResult({
-          //  response: { context: response.context, prompt: response.output.text[0] }
-          //});
-          session.beginDialog('pickDate')
-
+          session.beginDialog('gatherVisitInfo')
       }
   })
 })
@@ -131,124 +107,571 @@ bot.dialog('visitStudioIntent', function (session, args, next) {
     matches: /^I want to visit Liquid Studio$/i,
 });
 
-bot.dialog('pickDate',
-    function (session, args, next) {
-      var msg = new builder.Message(session);
-      msg.attachments([
-        new builder.HeroCard(session)
-               .text("Would you like to pick a date or choose the first avialble one?")
-               .buttons([
-                   builder.CardAction.imBack(session, "pick my own date and time", "pick my own date and time"),
-                   builder.CardAction.imBack(session, "choose first available", "choose first available")
-               ])
-      ]);
-      session.send(msg).endDialog();
-    }
-)
-
-/*
-bot.dialog('pickOwnDate', function (session, args, next) {
-  builder.Prompts.time(session, 'What date do you have mind?');
-  session.dialogData.time = builder.EntityRecognizer.resolveTime([results.response]);
-  session.endDialog()
-})
-.triggerAction({
-    matches: /^pick my own date$/i,
-});
-*/
-
-/*
-bot.dialog('gatherStudioVisitInfo', [
-    function(session, args, next) {
-        console.log('gatherStudioVisitInfo args', args)
-        session.beginDialog('visitDate')
-    },
-    function(session, results) {
-        session.beginDialog('numberOfVisitors')
-    }
-])
-*/
-
 // go through the Dialog as configured on IBM Watson
-bot.dialog('visitDate', [
-    function (session, args, next) {
-        // this should ask for the date
-        builder.Prompts.time(session, 'What date and time do you have mind (format: mm-dd-yyyy hh:MM, eg: 03-25-2018 15:30)?');
-
-    },
-    // now we have the date, confirm it?
-    function (session, results, next) {
-        console.log('date is:', results);
-        dateOfVisit = results.response.resolution.start;
-        builder.Prompts.confirm(session, 'Please confirm the date is ' + dateFormat(dateOfVisit, 'mm-dd-yyyy hh:MM'))
-        dateOfVisit = dateFormat(dateOfVisit, 'mm-dd-yyyy hh:MM')
-    },function (session, results, next) {
-        if (results.response) {
-          session.conversationData.watsonContext.date = dateFormat(dateOfVisit, 'mm-dd-yyyy')
-          session.conversationData.watsonContext.time =  dateFormat(dateOfVisit, 'hh:MM')
-          console.log('session.conversationData.watsonContext', session.conversationData.watsonContext)
-            // send confirmed response to IBM
-            conversation.message({
-                input: {
-                    'text': 'I want to visit Liquid Studio'
-                    //'date': dateFormat(dateOfVisit, 'mm-dd-yyyy'),
-                    //'time': dateFormat(dateOfVisit, 'hh:MM')
-                },
-                context: session.conversationData.watsonContext
-            },  function(err, response) {
-                if (err) {
-                    console.log('error:', err);
-                } else {
-                    session.conversationData.watsonContext = response.context
-                    session.conversationData.dateOfVisit = dateOfVisit
-                    console.log(JSON.stringify(response, null, 2));
-                    console.log('date of visit set for : ', session.conversationData.dateOfVisit)
-                    //session.endDialogWithResult( {response : dateOfVisit})
-                }
-            })
-        } else {
-            console.log('go and get the date again');
-            session.replaceDialog('visitDate');
-        }
-        console.log('we\'ve emerged out of the if')
-        next()
-    },function (session, results, next) {
+bot.dialog('gatherVisitInfo', [
+    function(session, results, next) {
+      session.beginDialog('visitDate')
+    }, function (session, results, next) {
       session.beginDialog('numberOfVisitors')
+    },function (session, results, next) {
+      session.beginDialog('topic')
+    },function (session, results, next) {
+      session.beginDialog('contactInfo')
+    },function (session, results, next) {
+      session.beginDialog('visitType')
+    },function (session, results, next) {
+      conversation.message({
+          input: {
+              'text': 'I want to visit Liquid Studio'
+          },
+          context: session.conversationData.watsonContext
+      },  function(err, response) {
+          if (err) {
+              console.log('error:', err);
+          } else {
+              session.conversationData.watsonContext = response.context
+              console.log(JSON.stringify(response, null, 2));
+              session.dialogData.userPrompt = response.output.text[0]
+          }
+          next()
+      })
+    },function (session, results, next) {
+      builder.Prompts.choice(session, session.dialogData.userPrompt, "Yes|No", { listStyle: builder.ListStyle.button })
+    },function (session, results) {
+        if (results.response.entity === 'Yes') {
+            createRequest(session)
+        } else {
+          session.send('Let\'s check the details.')
+          session.beginDialog('editVisitInfo')
+        }
     }
 ]).triggerAction({
     matches: /^pick my own date and time$/i,
 });
+
+// confirm one by one all the stuff they've entered
+bot.dialog('editVisitInfo', [
+  function (session, args, next) {
+    builder.Prompts.choice(session, 'Please confirm date: '+session.conversationData.watsonContext.dateOfVisit , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('visitDate')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm number of people: '+session.conversationData.watsonContext.number , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('numberOfVisitors')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm topic: '+session.conversationData.watsonContext.topic , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('topic')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm your email: '+session.conversationData.watsonContext.contactInfo , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('contactInfo')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm your visit type: '+session.conversationData.watsonContext.visitType , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('visitType')
+      }
+  },function (session, results, next) {
+      console.log('Everything is confirmed, ready to send out mails!')
+      createRequest(session)
+  }
+])
+
+
+function createRequest(session) {
+  var dateVisit = new Date(session.conversationData.watsonContext.dateOfVisit)
+  // if we have a valid date, create calendar event
+  if (dateVisit != 'Invalid Date') {
+    createGoogleCalEvent(session.conversationData.watsonContext.dateOfVisit,
+                  session.conversationData.watsonContext.number,
+                   session.conversationData.watsonContext.topic,
+                   session.conversationData.watsonContext.contactInfo,
+                   session.conversationData.watsonContext.visitType)
+
+  }
+
+ emailText = 'Preliminary request details for visiting Liquid Studio Stockholm:\n' +
+              'On ' + session.conversationData.watsonContext.dateOfVisit + '\n'
+                   +  session.conversationData.watsonContext.number +
+              ' people would like to visit the Studio.\n' +
+              'Visit Type is ' + session.conversationData.watsonContext.visitType + '.\n' +
+              'The topic of interest is ' + session.conversationData.watsonContext.topic + '.\n' +
+              'Contact info: ' + session.conversationData.watsonContext.contactInfo
+
+  var gmail = require('./quickstart_gmail.js');
+  gmail.sendMail(emailText, session.conversationData.watsonContext.contactInfo)
+  session.send('Thank you, our team will get in touch regarding your request. PLEASE NOTE: this does not constitute a booking, this is a request, someone from Liquid Studio will be in touch with regarding this soon. ')
+  session.endConversation()
+}
+
+bot.dialog('visitDate', [
+  function (session, args, next) {
+    builder.Prompts.choice(session, "Do you know the exact date for your visit?", "Yes|No", { listStyle: builder.ListStyle.button })
+  },function(session, results, next) {
+    if (results.response.entity === 'Yes') {
+      session.beginDialog('getExactVisitDate')
+    } else {
+      session.beginDialog('getFreeTextVisitDate')
+    }
+  },function(session, results, next) {
+    session.endDialog()
+  }
+])
+
+bot.dialog('getExactVisitDate', [
+  function(session, args, next) {
+    builder.Prompts.time(session, 'What date and time do you have in mind (format: yyyy-mm-dd HH:MM, eg: 2018-03-25 15:30)?');
+  },
+  // now we have the date, confirm it?
+  function (session, results, next) {
+      dateOfVisit = results.response.entity;
+      var dateNow = new Date();
+      var dateGiven = new Date(dateOfVisit);
+
+      if (dateGiven.getTime() - dateNow.getTime() <= 0) {
+        session.send('The given date occurs in the past.')
+        session.replaceDialog('getExactVisitDate');
+      } else {
+        // { listStyle: builder.ListStyle.button }
+        builder.Prompts.choice(session, "Please confirm date "+ dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM'), "Yes|No", { listStyle: builder.ListStyle.button })
+
+      }
+  },function(session, results, next) {
+    if (results.response.entity === 'Yes') {
+      dateOfVisit = dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM')
+      session.conversationData.watsonContext.dateOfVisit =  dateOfVisit
+      next()
+    } else {
+      session.replaceDialog('getExactVisitDate');
+    }
+  },function (session, results, next) {
+      //checkDateAvailability(utcDate, next)
+      fs.readFile('client_secret.json', function processClientSecrets(err, content) {
+        if (err) {
+          console.log('Error loading client secret file: ' + err);
+          return;
+        }
+        // Authorize a client with the loaded credentials, then call the
+        // Google Calendar API.
+        authorize(JSON.parse(content), isDateAvailable, session.conversationData.watsonContext.dateOfVisit, function(isClash) {
+            if (isClash) {
+              console.log('callbacking with true')
+              session.endDialog()
+            } else {
+              //builder.Prompts.text(session, 'That date is already booked, please try another.');
+              session.send('That date is already booked, please try another.')
+              session.replaceDialog('getExactVisitDate');
+            }
+        });
+      });
+  }
+])
+
+bot.dialog('getFreeTextVisitDate', [
+  function(session, args, next) {
+    builder.Prompts.text(session, 'Please give a general indication of the date:')
+  },function(session, results, next) {
+      session.conversationData.watsonContext.dateOfVisit = results.response
+      session.endDialog()
+  }
+])
 
 bot.dialog('numberOfVisitors', [
     function(session, args, next) {
       builder.Prompts.number(session, "How many people in the group?");
     },
     function(session, results) {
-      console.log('number of people:', results);
-      builder.Prompts.confirm(session, 'Please confirm the number of people is ' + results.response)
       numberOfVisitors = results.response
-      console.log('numberOfVisitors is:', numberOfVisitors)
-    },function (session, results) {
-        if (results.response) {
-          conversation.message({
-              input: {
-                  'number': ""+numberOfVisitors
-              },
-              context: session.conversationData.watsonContext
-          },  function(err, response) {
-              if (err) {
-                  console.log('error:', err);
-              } else {
-                  session.conversationData.watsonContext = response.context
-                  session.conversationData.numberOfVisitors = numberOfVisitors
-                  console.log(JSON.stringify(response, null, 2));
-                  console.log('size of party is  : ', session.conversationData.numberOfVisitors)
-                  //session.endDialogWithResult( {response : dateOfVisit})
-              }
-          })
-        } else {
-            console.log('go and get the number of the people again');
-            session.replaceDialog('numberOfVisitors');
-        }
+      session.conversationData.watsonContext.number = numberOfVisitors
+      session.endDialog()
     }
 ])
+
+
+
+bot.dialog('topic', [
+    function(session, args, next) {
+      builder.Prompts.text(session, "What topic are you interested in?");
+    },
+    function(session, results) {
+      topic = results.response
+      session.conversationData.watsonContext.topic = topic
+      session.endDialog()
+    }
+])
+
+
+bot.dialog('contactInfo', [
+    function(session, args, next) {
+      builder.Prompts.text(session, "Please provide your email in order for us to be able to contact you regarding your request:");
+    },
+    function(session, results) {
+      // if they gave us a funny email address, ask again, else confirm email
+      if (!validateEmail(results.response)) {
+        session.send('Invalid email address supplied.')
+        session.replaceDialog('contactInfo');
+      } else if (!isAccentureEmail(results.response)) {
+        session.send('Please supply Accenture email.')
+        session.replaceDialog('contactInfo');
+      } else {
+        contactInfo = results.response
+        builder.Prompts.choice(session, "Please confirm your email is "+ contactInfo, "Yes|No", { listStyle: builder.ListStyle.button })
+      }
+    },function(session, results, next) {
+      if (results.response.entity === 'Yes') {
+        session.conversationData.watsonContext.contactInfo = contactInfo
+        session.endDialog()
+      } else {
+        session.replaceDialog('contactInfo');
+      }
+    }
+])
+
+function validateEmail(email) {
+    var re = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+    return re.test(email.toLowerCase());
+}
+
+function isAccentureEmail(email) {
+  return email.endsWith('accenture.com');
+}
+
+bot.dialog('visitType', [
+    function(session, args) {
+      builder.Prompts.choice(session, "Please give some details about your request. Is it:", "Accenture Internal|Client|Other", { listStyle: builder.ListStyle.button })
+    }, function(session, results, next) {
+      other = false
+      if (results.response.entity === 'Accenture Internal') {
+        session.beginDialog('accentureInternal')
+      } else if (results.response.entity === 'Client') {
+        session.beginDialog('clientVisit')
+      } else if (results.response.entity === 'Other') {
+        session.beginDialog('specifyOther')
+        other = true
+      }
+    }, function(session, results, next) {
+        if (other) {
+          session.conversationData.watsonContext.visitType = 'Visit type: ' + results.response
+        }
+        session.endDialog()
+    }
+])
+
+bot.dialog('clientVisit', [
+  function(session, args) {
+    builder.Prompts.text(session, 'Please specify client name:')
+  }, function(session, results) {
+    clientName = results.response
+    session.conversationData.watsonContext.visitType = 'Client visit, name: ' + clientName
+    session.endDialog()
+  }
+])
+.triggerAction({
+    matches: /^Client$/i,
+});
+
+bot.dialog('accentureInternal', [
+  function(session, args) {
+    builder.Prompts.choice(session, "Please choose internal visit type:", "Recruiting|Onboarding|New Joiner|Other", { listStyle: builder.ListStyle.button })
+  }, function(session, results, next) {
+    selection = results.response.entity
+    if (results.response.entity === 'Other')  {
+      session.beginDialog('specifyOther')
+    }
+    next()
+  }, function(session, results) {
+      if (results.response) {
+        session.conversationData.watsonContext.visitType = 'Accenture Internal, ' + results.response
+      } else {
+        session.conversationData.watsonContext.visitType = 'Accenture Internal, ' + selection
+      }
+
+      session.endDialog()
+  }
+])
+.triggerAction({
+    matches: /^Accenture Internal$/i,
+});
+
+bot.dialog('specifyOther', [
+  function(session, args) {
+    builder.Prompts.text(session, 'Please specify:')
+  }, function(session, results) {
+    session.endDialogWithResult(results)
+  }
+])
+
+/*
+ *
+ *
+Google Calendar Stuff below here:
+*
+*
+*/
+
+var fs = require('fs');
+var readline = require('readline');
+var google = require('googleapis');
+var googleAuth = require('google-auth-library');
+
+// If modifying these scopes, delete your previously saved credentials
+// at ~/.credentials/calendar-nodejs-quickstart.json
+// var SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
+var SCOPES = ['https://www.googleapis.com/auth/calendar'];
+
+var TOKEN_DIR = (process.env.HOME || process.env.HOMEPATH ||
+    process.env.USERPROFILE) + '/.credentials/';
+console.log('TOKEN_DIR: ', TOKEN_DIR)
+var TOKEN_PATH = TOKEN_DIR + 'calendar-nodejs-quickstart.json';
+
+
+
+function createGoogleCalEvent(dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
+  fs.readFile('client_secret.json', function processClientSecrets(err, content) {
+    if (err) {
+      console.log('Error loading client secret file: ' + err);
+      return;
+    }
+    // Authorize a client with the loaded credentials, then call the
+    // Google Calendar API.
+    authorize(JSON.parse(content), insertEvent, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType);
+  });
+}
+
+// get first available day from google calendar
+
+function getFirstAvailableGoogleCalEvent() {
+  fs.readFile('client_secret.json', function processClientSecrets(err, content) {
+    if (err) {
+      console.log('Error loading client secret file: ' + err);
+      return;
+    }
+    // Authorize a client with the loaded credentials, then call the
+    // Google Calendar API.
+    authorize(JSON.parse(content), listEvents);
+  });
+}
+
+/**
+ * Create an OAuth2 client with the given credentials, and then execute the
+ * given callback function.
+ *
+ * @param {Object} credentials The authorization client credentials.
+ * @param {function} callback The callback to call with the authorized client.
+ */
+function authorize(credentials, callback, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
+  var clientSecret = credentials.installed.client_secret;
+  var clientId = credentials.installed.client_id;
+  var redirectUrl = credentials.installed.redirect_uris[0];
+  var auth = new googleAuth();
+  var oauth2Client = new auth.OAuth2(clientId, clientSecret, redirectUrl);
+
+  // Check if we have previously stored a token.
+  fs.readFile(TOKEN_PATH, function(err, token) {
+    if (err) {
+      getNewToken(oauth2Client, callback);
+    } else {
+      oauth2Client.credentials = JSON.parse(token);
+      callback(oauth2Client, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType);
+    }
+  });
+}
+
+/**
+ * Get and store new token after prompting for user authorization, and then
+ * execute the given callback with the authorized OAuth2 client.
+ *
+ * @param {google.auth.OAuth2} oauth2Client The OAuth2 client to get token for.
+ * @param {getEventsCallback} callback The callback to call with the authorized
+ *     client.
+ */
+function getNewToken(oauth2Client, callback) {
+  var authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: SCOPES
+  });
+  var rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  rl.question('Enter the code from that page here: ', function(code) {
+    rl.close();
+    oauth2Client.getToken(code, function(err, token) {
+      if (err) {
+        console.log('Error while trying to retrieve access token', err);
+        return;
+      }
+      oauth2Client.credentials = token;
+      storeToken(token);
+      callback(oauth2Client);
+    });
+  });
+}
+
+/**
+ * Store token to disk be used in later program executions.
+ *
+ * @param {Object} token The token to store to disk.
+ */
+function storeToken(token) {
+  try {
+    fs.mkdirSync(TOKEN_DIR);
+  } catch (err) {
+    if (err.code != 'EEXIST') {
+      throw err;
+    }
+  }
+  fs.writeFile(TOKEN_PATH, JSON.stringify(token));
+  console.log('Token stored to ' + TOKEN_PATH);
+}
+
+/**
+ * Lists the next 10 events on the user's primary calendar.
+ *
+ * @param {google.auth.OAuth2} auth An authorized OAuth2 client.
+ */
+function listEvents(auth) {
+  var calendar = google.calendar('v3');
+  calendar.events.list({
+    auth: auth,
+    calendarId: '2aj60sad7jl7m8gvm84m6i3e9s@group.calendar.google.com',
+    timeMin: (new Date()).toISOString(),
+    maxResults: 10,
+    singleEvents: true,
+    orderBy: 'startTime'
+  }, function(err, response) {
+    if (err) {
+      console.log('The API returned an error: ' + err);
+      return;
+    }
+    var events = response.items;
+    if (events.length == 0) {
+      console.log('No upcoming events found.');
+    } else {
+      console.log('Upcoming 10 events:');
+      for (var i = 0; i < events.length; i++) {
+        var event = events[i];
+        var start = event.start.dateTime || event.start.date;
+        console.log('%s - %s', start, event.summary);
+      }
+    }
+  });
+}
+
+
+function isDateAvailable(auth, dateOfVisit, callback) {
+  var calendar = google.calendar('v3');
+  timeMin = new Date(dateOfVisit)
+  timeMax = (new Date(dateOfVisit))
+  timeMax.setHours(timeMax.getHours() + 1)
+  calendar.events.list({
+    auth: auth,
+    calendarId: '2aj60sad7jl7m8gvm84m6i3e9s@group.calendar.google.com',
+    timeMin: timeMin.toISOString(),
+    timeMax: timeMax.toISOString(),
+    maxResults: 10,
+    singleEvents: true,
+    orderBy: 'startTime'
+  }, function(err, response) {
+    if (err) {
+      console.log('The API returned an error: ' + err);
+      callback(err);
+    }
+    var events = response.items;
+    if (events.length == 0) {
+      console.log('No clashing events found.');
+      noClash = true
+      callback(noClash)
+    } else {
+      console.log('Clashing events:');
+      for (var i = 0; i < events.length; i++) {
+        var event = events[i];
+        var start = event.start.dateTime || event.start.date;
+        console.log('%s - %s', start, event.summary);
+      }
+      noClash = false
+      callback(noClash)
+    }
+  });
+}
+
+
+function insertEvent(auth, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
+  var startDate = new Date(dateOfVisit);
+  console.log('startDate:', startDate)
+
+  endDate = new Date(startDate)
+  endDate.setHours(endDate.getHours() + 1);
+  console.log('endDate:', endDate)
+
+  var event = {
+    'summary': numberOfVisitors + ' interested in ' + topic,
+    'location': 'Liquid Studio Stockholm',
+    'description': 'Visit type:' + visitType + '. Contact info: ' + contactInfo,
+    'start': {
+      'dateTime': startDate,
+      //'timeZone': 'UTC+01:00',
+    },
+    'end': {
+      'dateTime': endDate,
+      //'timeZone': 'UTC+01:00',
+    },
+  };
+
+  var calendar = google.calendar('v3');
+
+  calendar.events.insert({
+    auth: auth,
+    calendarId: '2aj60sad7jl7m8gvm84m6i3e9s@group.calendar.google.com',
+    resource: event,
+  }, function(err, event) {
+    if (err) {
+      console.log('There was an error contacting the Calendar service: ' + err);
+      return;
+    }
+    console.log('Event created: %s', event.htmlLink);
+  });
+}
+
+
+
+/**
+ * Send Message.
+ *
+ * @param  {String} userId User's email address. The special value 'me'
+ * can be used to indicate the authenticated user.
+ * @param  {String} email RFC 5322 formatted String.
+ * @param  {Function} callback Function to call when the request is complete.
+ */
+function sendMessage(userId, email, callback) {
+  // Using the js-base64 library for encoding:
+  // https://www.npmjs.com/package/js-base64
+  var base64EncodedEmail = Base64.encodeURI(email);
+  var request = gapi.client.gmail.users.messages.send({
+    'userId': userId,
+    'resource': {
+      'raw': base64EncodedEmail
+    }
+  });
+  request.execute(callback);
+}

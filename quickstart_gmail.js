@@ -156,9 +156,9 @@ function send(auth, text, requesterEmail) {
   new BuildMail('text/plain')
     .setContent(text)
     .addHeader({
-          to: 'victor.neiman@accenture.com',
+          to: 'lostvicking@gmail.com',
           cc: requesterEmail,
-          subject: 'Liquid Studio Visit Request',
+          subject: 'Request to visit Liquid Studio Stockholm',
       }).build(function(err, mail){
         console.log(mail.toString('ascii'));
 

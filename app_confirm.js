@@ -43,25 +43,7 @@ var bot = new builder.UniversalBot(connector, [
           console.error('No results back from welcomeDialog')
         }
 
-    },
-    // gather studio visit info
-    function (session, results, next) {
-      if(session.dialogData.time) {
-        console.log('========== Time has been set to ', session.dialogData.time)
-      }
-
-
-      if (results.response) {
-        console.log('intentIdentificationDialog results:', results.respsonse)
-        //session.beginDialog('gatherStudioVisitInfo', results.respsonse)
-      } else {
-        console.error('No results back from intentIdentificationDialog')
-      }
-    },
-    function (session, results, next) {
-      session.endConversation('Goodbye!')
     }
-    // send notification
 ]);
 
 // use args param to send welcome message to user
@@ -73,8 +55,6 @@ bot.dialog('welcomeDialog', [
           if (err) {
             console.error(err); // something went wrong
           }
-          console.log('****************', JSON.stringify(response, null, 2), '****************');
-
             // intent detection
             if (response.intents.length > 0 && response.intents[0].intent === 'Greeting') {
                 session.send(response.output.text)
@@ -89,32 +69,24 @@ bot.dialog('welcomeDialog', [
 
 // return watson context if intent correctly identified as RequestStudioVisit
 // otherwise sit here until we identify the intent correctly
-bot.dialog('intentIdentificationDialog',
-    function (session, args, next) {
-      var msg = new builder.Message(session);
-      msg.attachments([
-        new builder.HeroCard(session)
-               .text("Would you like to book a visit to the Studio?")
-               .buttons([
-                   builder.CardAction.imBack(session, "I want to visit Liquid Studio", "yes"),
-                   builder.CardAction.imBack(session, "don't book visit", "no")
-               ])
-      ]);
-      session.send(msg).endDialog();
+bot.dialog('intentIdentificationDialog',[
+    function (session, args) {
+      builder.Prompts.choice(session, "Would you like to request a visit to Liquid Studio Stockholm?", "Yes|No", { listStyle: builder.ListStyle.button })
+    }, function (session, results, next) {
+      console.log('Visist request prompt results:', results)
+      if (results.response.entity === 'Yes') {
+        session.beginDialog('visitStudioIntent')
+      } else {
+        session.endConversation()
+      }
     }
-)
-
-bot.dialog('dontBookVisit', function (session, args, next) {
-    session.endConversation()
-}).triggerAction({
-    matches: /^don't book visit$/i,
-});
+]);
 
 bot.dialog('visitStudioIntent', function (session, args, next) {
   var watsonContext = ''
   var datePrompt = ''
   conversation.message({
-      input: {'text': session.message.text},
+      input: {'text': 'I want to visit Liquid Studio'},
       context: args
   },  function(err, response) {
       if (err)
@@ -126,10 +98,8 @@ bot.dialog('visitStudioIntent', function (session, args, next) {
       if (response.intents.length > 0 && response.intents[0].intent === 'RequestStudioVisit') {
           watsonContext = response.context
           datePrompt = response.output.text[0]
-          console.log('We are returning the following tings', response.context, response.output.text[0])
           session.conversationData.watsonContext = response.context
-          console.log('persisted watson context as:', session.conversationData.watsonContext)
-          session.beginDialog('visitDate')
+          session.beginDialog('gatherVisitInfo')
       }
   })
 })
@@ -137,84 +107,18 @@ bot.dialog('visitStudioIntent', function (session, args, next) {
     matches: /^I want to visit Liquid Studio$/i,
 });
 
-// probably shouldn't be letting them choose first available
-// just ask which date they want
-bot.dialog('pickDate',
-    function (session, args, next) {
-      var msg = new builder.Message(session);
-      msg.attachments([
-        new builder.HeroCard(session)
-               .text("Would you like to pick a date or choose the first avialble one?")
-               .buttons([
-                   builder.CardAction.imBack(session, "pick my own date and time", "pick my own date and time"),
-                   builder.CardAction.imBack(session, "choose first available", "choose first available")
-               ])
-      ]);
-      session.send(msg).endDialog();
-    }
-)
-
 // go through the Dialog as configured on IBM Watson
-bot.dialog('visitDate', [
-    function (session, args, next) {
-        // this should ask for the date
-        builder.Prompts.time(session, 'What date and time do you have in mind (format: yyyy-mm-dd HH:MM, eg: 2018-03-25 15:30)?');
-    },
-    // now we have the date, confirm it?
-    function (session, results, next) {
-        console.log('date is:', results);
-        dateOfVisit = results.response.entity;
-        var dateNow = new Date();
-        var dateGiven = new Date(dateOfVisit);
-
-        console.log('dateNow.now()', dateNow.getTime())
-        console.log('dateGiven.now()', dateGiven.getTime())
-        if (dateGiven.getTime() - dateNow.getTime() <= 0) {
-          console.log('go and get the date again');
-          session.send('The given date occurs in the past.')
-          session.replaceDialog('visitDate');
-        } else {
-          builder.Prompts.confirm(session, 'Please confirm the date is ' + dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM'))
-          dateOfVisit = dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM')
-        }
-    },function (session, results, next) {
-        if (results.response) {
-          session.conversationData.watsonContext.dateOfVisit =  (new Date(dateOfVisit)).toString()
-        } else {
-            console.log('go and get the date again');
-            session.replaceDialog('visitDate');
-        }
-        next()
-    },function (session, results, next) {
-        //checkDateAvailability(utcDate, next)
-        fs.readFile('client_secret.json', function processClientSecrets(err, content) {
-          if (err) {
-            console.log('Error loading client secret file: ' + err);
-            return;
-          }
-          // Authorize a client with the loaded credentials, then call the
-          // Google Calendar API.
-          authorize(JSON.parse(content), isDateAvailable, session.conversationData.watsonContext.dateOfVisit, function(isClash) {
-              if (isClash) {
-                console.log('callbacking with true')
-                next()
-              } else {
-                console.log('date clash problem, lets get another date!');
-                //builder.Prompts.text(session, 'That date is already booked, please try another.');
-                session.send('That date is already booked, please try another.')
-                session.replaceDialog('visitDate');
-              }
-          });
-        });
-    }
-    ,function (session, results, next) {
+bot.dialog('gatherVisitInfo', [
+    function(session, results, next) {
+      session.beginDialog('visitDate')
+    }, function (session, results, next) {
       session.beginDialog('numberOfVisitors')
     },function (session, results, next) {
       session.beginDialog('topic')
     },function (session, results, next) {
       session.beginDialog('contactInfo')
     },function (session, results, next) {
-      session.beginDialog('additionalNotes')
+      session.beginDialog('visitType')
     },function (session, results, next) {
       conversation.message({
           input: {
@@ -232,65 +136,180 @@ bot.dialog('visitDate', [
           next()
       })
     },function (session, results, next) {
-      // this should be the overall confirmation message from Watson
-      builder.Prompts.confirm(session, session.dialogData.userPrompt)
+      builder.Prompts.choice(session, session.dialogData.userPrompt, "Yes|No", { listStyle: builder.ListStyle.button })
     },function (session, results) {
-        if (results.response) {
-            // go and check the calendar
-            createGoogleCalEvent(session.conversationData.watsonContext.dateOfVisit,
-                          session.conversationData.watsonContext.number,
-                           session.conversationData.watsonContext.topic,
-                           session.conversationData.watsonContext.contactInfo,
-                           session.conversationData.watsonContext.visitType)
-
-           emailText = 'On ' + session.conversationData.watsonContext.dateOfVisit + '\n'
-                             +  session.conversationData.watsonContext.number +
-                        ' people would like to visit the Studio.\n' +
-                        'Visit Type is ' + session.conversationData.watsonContext.visitType + '.\n' +
-                        'The topic of interest is ' + session.conversationData.watsonContext.topic + '.\n' +
-                        'Contact info: ' + session.conversationData.watsonContext.contactInfo
-
-
-
-            var gmail = require('./quickstart_gmail.js');
-            gmail.sendMail(emailText, session.conversationData.watsonContext.contactInfo)
-
-            session.endConversation()
+        if (results.response.entity === 'Yes') {
+            createRequest(session)
         } else {
-          session.send('Let\'s start over.')
-          session.replaceDialog('visitDate')
+          session.send('Let\'s check the details.')
+          session.beginDialog('editVisitInfo')
         }
     }
 ]).triggerAction({
     matches: /^pick my own date and time$/i,
 });
 
-bot.dialog('chooseFirstAvailable', [
-  function(session, results) {
-    getFirstAvailableGoogleCalEvent()
+// confirm one by one all the stuff they've entered
+bot.dialog('editVisitInfo', [
+  function (session, args, next) {
+    builder.Prompts.choice(session, 'Please confirm date: '+session.conversationData.watsonContext.dateOfVisit , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('visitDate')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm number of people: '+session.conversationData.watsonContext.number , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('numberOfVisitors')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm topic: '+session.conversationData.watsonContext.topic , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('topic')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm your email: '+session.conversationData.watsonContext.contactInfo , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('contactInfo')
+      }
+  },function (session, results, next) {
+    builder.Prompts.choice(session, 'Please confirm your visit type: '+session.conversationData.watsonContext.visitType , "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+      if (results.response.entity === 'Yes') {
+            next()
+      } else {
+        session.beginDialog('visitType')
+      }
+  },function (session, results, next) {
+      console.log('Everything is confirmed, ready to send out mails!')
+      createRequest(session)
+  }
+])
+
+
+function createRequest(session) {
+  var dateVisit = new Date(session.conversationData.watsonContext.dateOfVisit)
+  // if we have a valid date, create calendar event
+  if (dateVisit != 'Invalid Date') {
+    createGoogleCalEvent(session.conversationData.watsonContext.dateOfVisit,
+                  session.conversationData.watsonContext.number,
+                   session.conversationData.watsonContext.topic,
+                   session.conversationData.watsonContext.contactInfo,
+                   session.conversationData.watsonContext.visitType)
+
   }
 
-]).triggerAction({
-    matches: /^choose first available$/i,
-});
+ emailText = 'Preliminary request details for visiting Liquid Studio Stockholm:\n' +
+              'On ' + session.conversationData.watsonContext.dateOfVisit + '\n'
+                   +  session.conversationData.watsonContext.number +
+              ' people would like to visit the Studio.\n' +
+              'Visit Type is ' + session.conversationData.watsonContext.visitType + '.\n' +
+              'The topic of interest is ' + session.conversationData.watsonContext.topic + '.\n' +
+              'Contact info: ' + session.conversationData.watsonContext.contactInfo
+
+  var gmail = require('./quickstart_gmail.js');
+  gmail.sendMail(emailText, session.conversationData.watsonContext.contactInfo)
+  session.send('Thank you, our team will get in touch regarding your request. PLEASE NOTE: this does not constitute a booking, this is a request, someone from Liquid Studio will be in touch with regarding this soon. ')
+  session.endConversation()
+}
+
+bot.dialog('visitDate', [
+  function (session, args, next) {
+    builder.Prompts.choice(session, "Do you know the exact date for your visit?", "Yes|No", { listStyle: builder.ListStyle.button })
+  },function(session, results, next) {
+    if (results.response.entity === 'Yes') {
+      session.beginDialog('getExactVisitDate')
+    } else {
+      session.beginDialog('getFreeTextVisitDate')
+    }
+  },function(session, results, next) {
+    session.endDialog()
+  }
+])
+
+bot.dialog('getExactVisitDate', [
+  function(session, args, next) {
+    builder.Prompts.time(session, 'What date and time do you have in mind (format: yyyy-mm-dd HH:MM, eg: 2018-03-25 15:30)?');
+  },
+  // now we have the date, confirm it?
+  function (session, results, next) {
+      dateOfVisit = results.response.entity;
+      var dateNow = new Date();
+      var dateGiven = new Date(dateOfVisit);
+
+      if (dateGiven.getTime() - dateNow.getTime() <= 0) {
+        session.send('The given date occurs in the past.')
+        session.replaceDialog('getExactVisitDate');
+      } else {
+        // { listStyle: builder.ListStyle.button }
+        builder.Prompts.choice(session, "Please confirm date "+ dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM'), "Yes|No", { listStyle: builder.ListStyle.button })
+
+      }
+  },function(session, results, next) {
+    if (results.response.entity === 'Yes') {
+      dateOfVisit = dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM')
+      session.conversationData.watsonContext.dateOfVisit =  dateOfVisit
+      next()
+    } else {
+      session.replaceDialog('getExactVisitDate');
+    }
+  },function (session, results, next) {
+      //checkDateAvailability(utcDate, next)
+      fs.readFile('client_secret.json', function processClientSecrets(err, content) {
+        if (err) {
+          console.log('Error loading client secret file: ' + err);
+          return;
+        }
+        // Authorize a client with the loaded credentials, then call the
+        // Google Calendar API.
+        authorize(JSON.parse(content), isDateAvailable, session.conversationData.watsonContext.dateOfVisit, function(isClash) {
+            if (isClash) {
+              console.log('callbacking with true')
+              session.endDialog()
+            } else {
+              //builder.Prompts.text(session, 'That date is already booked, please try another.');
+              session.send('That date is already booked, please try another.')
+              session.replaceDialog('getExactVisitDate');
+            }
+        });
+      });
+  }
+])
+
+bot.dialog('getFreeTextVisitDate', [
+  function(session, args, next) {
+    builder.Prompts.text(session, 'Please give a general indication of the date:')
+  },function(session, results, next) {
+      session.conversationData.watsonContext.dateOfVisit = results.response
+      session.endDialog()
+  }
+])
 
 bot.dialog('numberOfVisitors', [
     function(session, args, next) {
       builder.Prompts.number(session, "How many people in the group?");
     },
     function(session, results) {
-      console.log('number of people:', results);
-      builder.Prompts.confirm(session, 'Please confirm the number of people is ' + results.response)
       numberOfVisitors = results.response
-      console.log('numberOfVisitors is:', numberOfVisitors)
-    },function (session, results) {
-        if (results.response) {
-          session.conversationData.watsonContext.number = numberOfVisitors
-          session.endDialog()
-        } else {
-            console.log('go and get the number of the people again');
-            session.replaceDialog('numberOfVisitors');
-        }
+      builder.Prompts.choice(session, "Please confirm number of people is "+ numberOfVisitors, "Yes|No", { listStyle: builder.ListStyle.button })
+    },function(session, results, next) {
+      if (results.response.entity === 'Yes') {
+        session.conversationData.watsonContext.number = numberOfVisitors
+        session.endDialog()
+      } else {
+        session.replaceDialog('numberOfVisitors');
+      }
     }
 ])
 
@@ -301,17 +320,15 @@ bot.dialog('topic', [
       builder.Prompts.text(session, "What topic are you interested in?");
     },
     function(session, results) {
-      console.log('number of people:', results);
-      builder.Prompts.confirm(session, 'Please confirm the topic is: ' + results.response)
       topic = results.response
-      console.log('topic is:', topic)
-    },function (session, results) {
-        if (results.response) {
-          session.conversationData.watsonContext.topic = topic
-          session.endDialog()
-        } else {
-            session.replaceDialog('topic');
-        }
+      builder.Prompts.choice(session, "Please confirm the topic is "+ topic, "Yes|No", { listStyle: builder.ListStyle.button })
+    },function(session, results, next) {
+      if (results.response.entity === 'Yes') {
+        session.conversationData.watsonContext.topic = topic
+        session.endDialog()
+      } else {
+        session.replaceDialog('topic');
+      }
     }
 ])
 
@@ -321,23 +338,24 @@ bot.dialog('contactInfo', [
       builder.Prompts.text(session, "Please provide your email in order for us to be able to contact you regarding your request:");
     },
     function(session, results) {
-      console.log('contact:', results);
       // if they gave us a funny email address, ask again, else confirm email
       if (!validateEmail(results.response)) {
         session.send('Invalid email address supplied.')
         session.replaceDialog('contactInfo');
+      } else if (!isAccentureEmail(results.response)) {
+        session.send('Please supply Accenture email.')
+        session.replaceDialog('contactInfo');
       } else {
-        builder.Prompts.confirm(session, 'Please confirm your email: ' + results.response)
         contactInfo = results.response
-        console.log('contactInfo is:', contactInfo)
+        builder.Prompts.choice(session, "Please confirm your email is "+ contactInfo, "Yes|No", { listStyle: builder.ListStyle.button })
       }
-    },function (session, results) {
-        if (results.response) {
-          session.conversationData.watsonContext.contactInfo = contactInfo
-          session.endDialog()
-        } else {
-            session.replaceDialog('contactInfo');
-        }
+    },function(session, results, next) {
+      if (results.response.entity === 'Yes') {
+        session.conversationData.watsonContext.contactInfo = contactInfo
+        session.endDialog()
+      } else {
+        session.replaceDialog('contactInfo');
+      }
     }
 ])
 
@@ -346,20 +364,20 @@ function validateEmail(email) {
     return re.test(email.toLowerCase());
 }
 
-bot.dialog('additionalNotes', [
+function isAccentureEmail(email) {
+  return email.endsWith('accenture.com');
+}
+
+bot.dialog('visitType', [
     function(session, args) {
       builder.Prompts.choice(session, "Please give some details about your request. Is it:", "Accenture Internal|Client|Other", { listStyle: builder.ListStyle.button })
     }, function(session, results, next) {
       other = false
-      console.log('results', results)
       if (results.response.entity === 'Accenture Internal') {
-        console.log('Accenture Internal')
         session.beginDialog('accentureInternal')
       } else if (results.response.entity === 'Client') {
-        console.log('Client')
         session.beginDialog('clientVisit')
       } else if (results.response.entity === 'Other') {
-        console.log('Other')
         session.beginDialog('specifyOther')
         other = true
       }
@@ -375,10 +393,10 @@ bot.dialog('clientVisit', [
   function(session, args) {
     builder.Prompts.text(session, 'Please specify client name:')
   }, function(session, results) {
-    builder.Prompts.confirm(session, 'Please confirm client name: ' + results.response)
     clientName = results.response
+    builder.Prompts.choice(session, 'Please confirm client name: ' + clientName, "Yes|No", { listStyle: builder.ListStyle.button })
   },function (session, results) {
-      if (results.response) {
+      if (results.response.entity === 'Yes') {
         session.conversationData.watsonContext.visitType = 'Client visit, name: ' + clientName
         session.endDialog()
       } else {
@@ -400,12 +418,9 @@ bot.dialog('accentureInternal', [
     }
     next()
   }, function(session, results) {
-      console.log('============ results:', results)
       if (results.response) {
-        console.log('Accenture Internal, results.response:' + results.response)
         session.conversationData.watsonContext.visitType = 'Accenture Internal, ' + results.response
       } else {
-        console.log('Accenture Internal, selection:' + selection)
         session.conversationData.watsonContext.visitType = 'Accenture Internal, ' + selection
       }
 
@@ -423,27 +438,6 @@ bot.dialog('specifyOther', [
     session.endDialogWithResult(results)
   }
 ])
-
-/*
-bot.dialog('otherVisit', [
-  function(session, args) {
-    builder.Prompts.text(session, 'Please specify visit type:')
-  }, function(session, results) {
-    builder.Prompts.confirm(session, 'Please confirm visit type: ' + results.response)
-    visitInfo = results.response
-  },function (session, results) {
-      if (results.response) {
-        session.conversationData.watsonContext.additionalNotes = 'Other visit: ' + visitInfo
-        session.endDialog()
-      } else {
-          session.replaceDialog('otherVisit');
-      }
-  }
-])
-.triggerAction({
-    matches: /^Other$/i,
-});
-*/
 
 /*
  *
@@ -471,7 +465,6 @@ var TOKEN_PATH = TOKEN_DIR + 'calendar-nodejs-quickstart.json';
 
 
 function createGoogleCalEvent(dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
-  console.log('createGoogleCalEvent')
   fs.readFile('client_secret.json', function processClientSecrets(err, content) {
     if (err) {
       console.log('Error loading client secret file: ' + err);
@@ -496,29 +489,6 @@ function getFirstAvailableGoogleCalEvent() {
     authorize(JSON.parse(content), listEvents);
   });
 }
-
-/*
-function checkDateAvailability(dateOfVisit) {
-  fs.readFile('client_secret.json', function processClientSecrets(err, content) {
-    if (err) {
-      console.log('Error loading client secret file: ' + err);
-      return;
-    }
-    // Authorize a client with the loaded credentials, then call the
-    // Google Calendar API.
-    authorize(JSON.parse(content), isDateAvailable, dateOfVisit, function(isClash) {
-        if (isClash) {
-          console.log('callbacking with true')
-          next()
-        } else {
-          console.log('date clash problem, lets get another date!');
-          builder.Prompts.text(session, 'That date is already booked, please try another.');
-          session.replaceDialog('visitDate');
-        }
-    });
-  });
-}
-*/
 
 /**
  * Create an OAuth2 client with the given credentials, and then execute the
@@ -558,7 +528,6 @@ function getNewToken(oauth2Client, callback) {
     access_type: 'offline',
     scope: SCOPES
   });
-  console.log('Authorize this app by visiting this url: ', authUrl);
   var rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -601,7 +570,6 @@ function storeToken(token) {
  */
 function listEvents(auth) {
   var calendar = google.calendar('v3');
-  console.log('I think the date is:', (new Date()).toISOString())
   calendar.events.list({
     auth: auth,
     calendarId: '2aj60sad7jl7m8gvm84m6i3e9s@group.calendar.google.com',
@@ -632,16 +600,8 @@ function listEvents(auth) {
 function isDateAvailable(auth, dateOfVisit, callback) {
   var calendar = google.calendar('v3');
   timeMin = new Date(dateOfVisit)
-  // adjust for timezone offset which is negative
-  // so effectively add the offset in minutes to the time to get locale specific time
-  //timeMin.setTime(timeMin.getTime() + (-1*timeMin.getTimezoneOffset()*60*1000))
-  console.log('timeMin.toISOString is :', timeMin.toISOString())
-
   timeMax = (new Date(dateOfVisit))
   timeMax.setHours(timeMax.getHours() + 1)
-  // add an hour
-  //timeMax.setTime(timeMax.getTime() + (1*60*60*1000))
-  console.log('timeMax.toISOString is :', timeMax.toISOString())
   calendar.events.list({
     auth: auth,
     calendarId: '2aj60sad7jl7m8gvm84m6i3e9s@group.calendar.google.com',
@@ -681,15 +641,6 @@ function insertEvent(auth, dateOfVisit, numberOfVisitors, topic, contactInfo, vi
   endDate = new Date(startDate)
   endDate.setHours(endDate.getHours() + 1);
   console.log('endDate:', endDate)
-
-
-/*
-  console.log('session.conversationData.utcDate:', session.conversationData.utcDate)
-  console.log('startDate:', session.conversationData.utcDate)
-  endDate = session.conversationData.utcDate
-  endDate.setHours(endDate.getHours()+1)
-  console.log('endDate:', endDate)
-*/
 
   var event = {
     'summary': numberOfVisitors + ' interested in ' + topic,
