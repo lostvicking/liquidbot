@@ -120,23 +120,11 @@ bot.dialog('gatherVisitInfo', [
     },function (session, results, next) {
       session.beginDialog('visitType')
     },function (session, results, next) {
-      conversation.message({
-          input: {
-              'text': 'I want to visit Liquid Studio'
-          },
-          context: session.conversationData.watsonContext
-      },  function(err, response) {
-          if (err) {
-              console.log('error:', err);
-          } else {
-              session.conversationData.watsonContext = response.context
-              console.log(JSON.stringify(response, null, 2));
-              session.dialogData.userPrompt = response.output.text[0]
-          }
-          next()
-      })
+      session.beginDialog('wbsCode')
     },function (session, results, next) {
-      builder.Prompts.choice(session, session.dialogData.userPrompt, "Yes|No", { listStyle: builder.ListStyle.button })
+      var messageToUser = sendWatsonMessage(session, confirmationCallback)
+      console.log('messageToUser', messageToUser)
+      //builder.Prompts.choice(session, messageToUser, "Yes|No", { listStyle: builder.ListStyle.button })
     },function (session, results) {
         if (results.response.entity === 'Yes') {
             createRequest(session)
@@ -148,6 +136,46 @@ bot.dialog('gatherVisitInfo', [
 ]).triggerAction({
     matches: /^pick my own date and time$/i,
 });
+
+function sendWatsonMessage(botSession, callback) {
+  conversation.message({
+      input: {
+          'text': 'I want to visit Liquid Studio'
+      },
+      context: botSession.conversationData.watsonContext
+  },  function (err, response) {
+    console.log('response', response)
+    if (err) {
+      console.log('err',err)
+      return messageToUser = err
+    } else if (response.context.wbsCode) {
+      console.log('response.output.text[0]',response.output.text[0])
+      callback(botSession, response.output.text[0])
+    } else {
+      console.log('response.output.text[1]',response.output.text[1])
+      callback(botSession, response.output.text[1])
+    }
+  })
+}
+
+function confirmationCallback(session, userPrompt) {
+  session.conversationData.userPrompt = userPrompt
+  session.beginDialog('confirmDialog')
+  //builder.Prompts.choice(session, userPrompt, "Yes|No", { listStyle: builder.ListStyle.button })
+}
+
+bot.dialog('confirmDialog', [
+  function (session, args, next) {
+    builder.Prompts.choice(session, session.conversationData.userPrompt, "Yes|No", { listStyle: builder.ListStyle.button })
+  },function (session, results, next) {
+    if (results.response.entity === 'Yes') {
+        createRequest(session)
+    } else {
+      session.send('Let\'s check the details.')
+      session.beginDialog('editVisitInfo')
+    }
+  }
+])
 
 // confirm one by one all the stuff they've entered
 bot.dialog('editVisitInfo', [
@@ -206,7 +234,8 @@ function createRequest(session) {
                   session.conversationData.watsonContext.number,
                    session.conversationData.watsonContext.topic,
                    session.conversationData.watsonContext.contactInfo,
-                   session.conversationData.watsonContext.visitType)
+                   session.conversationData.watsonContext.visitType,
+                   session.conversationData.watsonContext.wbsCode)
 
   }
 
@@ -217,6 +246,9 @@ function createRequest(session) {
               'Visit Type is ' + session.conversationData.watsonContext.visitType + '.\n' +
               'The topic of interest is ' + session.conversationData.watsonContext.topic + '.\n' +
               'Contact info: ' + session.conversationData.watsonContext.contactInfo
+
+  if (session.conversationData.watsonContext.wbsCode)
+      emailText += '.\n' +'WBS code:' + session.conversationData.watsonContext.wbsCode
 
   var gmail = require('./quickstart_gmail.js');
   gmail.sendMail(emailText, session.conversationData.watsonContext.contactInfo)
@@ -311,11 +343,22 @@ bot.dialog('numberOfVisitors', [
 
 bot.dialog('topic', [
     function(session, args, next) {
-      builder.Prompts.text(session, "What topic are you interested in?");
+      other = false
+      builder.Prompts.choice(session, "What topic are you intereseted in, is it:", "Computer Vision|Machine Learning|Chatbots|IoT|Other", { listStyle: builder.ListStyle.button })
     },
-    function(session, results) {
-      topic = results.response
-      session.conversationData.watsonContext.topic = topic
+    function(session, results, next) {
+      topic = results.response.entity
+      if (results.response.entity === 'Other') {
+        session.beginDialog('specifyOther')
+        other = true
+      }
+      next()
+    }, function(session, results, next) {
+      if (other) {
+        session.conversationData.watsonContext.topic = results.response
+      } else {
+        session.conversationData.watsonContext.topic = topic
+      }
       session.endDialog()
     }
 ])
@@ -392,7 +435,7 @@ bot.dialog('clientVisit', [
 
 bot.dialog('accentureInternal', [
   function(session, args) {
-    builder.Prompts.choice(session, "Please choose internal visit type:", "Recruiting|Onboarding|New Joiner|Other", { listStyle: builder.ListStyle.button })
+    builder.Prompts.choice(session, "Please choose internal visit type:", "Recruiting|Onboarding|Community Event|Other", { listStyle: builder.ListStyle.button })
   }, function(session, results, next) {
     selection = results.response.entity
     if (results.response.entity === 'Other')  {
@@ -421,6 +464,26 @@ bot.dialog('specifyOther', [
   }
 ])
 
+
+
+bot.dialog('wbsCode', [
+  function(session, args) {
+    builder.Prompts.choice(session, "Studio time costs money, is there a WBS  code available? ", "Yes|No", { listStyle: builder.ListStyle.button })
+  }, function(session, results, next) {
+    if (results.response.entity === 'Yes')  {
+      builder.Prompts.text(session, 'Please enter WBS:')
+    } else {
+      session.endDialog()
+    }
+    next()
+  }, function(session, results, next) {
+    if (results.response) {
+      session.conversationData.watsonContext.wbsCode = results.response
+    }
+    session.endDialog()
+  }
+])
+
 /*
  *
  *
@@ -446,7 +509,7 @@ var TOKEN_PATH = TOKEN_DIR + 'calendar-nodejs-quickstart.json';
 
 
 
-function createGoogleCalEvent(dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
+function createGoogleCalEvent(dateOfVisit, numberOfVisitors, topic, contactInfo, visitType, wbsCode) {
   fs.readFile('client_secret.json', function processClientSecrets(err, content) {
     if (err) {
       console.log('Error loading client secret file: ' + err);
@@ -454,7 +517,7 @@ function createGoogleCalEvent(dateOfVisit, numberOfVisitors, topic, contactInfo,
     }
     // Authorize a client with the loaded credentials, then call the
     // Google Calendar API.
-    authorize(JSON.parse(content), insertEvent, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType);
+    authorize(JSON.parse(content), insertEvent, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType, wbsCode);
   });
 }
 
@@ -479,7 +542,7 @@ function getFirstAvailableGoogleCalEvent() {
  * @param {Object} credentials The authorization client credentials.
  * @param {function} callback The callback to call with the authorized client.
  */
-function authorize(credentials, callback, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
+function authorize(credentials, callback, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType, wbsCode) {
   var clientSecret = credentials.installed.client_secret;
   var clientId = credentials.installed.client_id;
   var redirectUrl = credentials.installed.redirect_uris[0];
@@ -492,7 +555,7 @@ function authorize(credentials, callback, dateOfVisit, numberOfVisitors, topic, 
       getNewToken(oauth2Client, callback);
     } else {
       oauth2Client.credentials = JSON.parse(token);
-      callback(oauth2Client, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType);
+      callback(oauth2Client, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType, wbsCode);
     }
   });
 }
@@ -616,7 +679,7 @@ function isDateAvailable(auth, dateOfVisit, callback) {
 }
 
 
-function insertEvent(auth, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType) {
+function insertEvent(auth, dateOfVisit, numberOfVisitors, topic, contactInfo, visitType, wbsCode) {
   var startDate = new Date(dateOfVisit);
   console.log('startDate:', startDate)
 
@@ -627,7 +690,7 @@ function insertEvent(auth, dateOfVisit, numberOfVisitors, topic, contactInfo, vi
   var event = {
     'summary': numberOfVisitors + ' interested in ' + topic,
     'location': 'Liquid Studio Stockholm',
-    'description': 'Visit type:' + visitType + '. Contact info: ' + contactInfo,
+    'description': 'Visit type:' + visitType + ', Contact info: ' + contactInfo + ', WBS: '+ wbsCode,
     'start': {
       'dateTime': startDate,
       //'timeZone': 'UTC+01:00',
