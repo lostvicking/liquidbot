@@ -219,28 +219,9 @@ bot.dialog('editVisitInfo', [
       } else {
         session.beginDialog('visitType')
       }
-  }, function(session, results, next){
-      session.conversationData.wbsDialogRepeated = false
-      if (session.conversationData.watsonContext.wbsCode) {
-        builder.Prompts.choice(session, 'Please confirm the WBS code: '+session.conversationData.watsonContext.wbsCode , "Yes|No", { listStyle: builder.ListStyle.button })
-      } else {
-        // at this stage everything except WBS is confirmed, lets ask them for a WBS one more time
-        session.conversationData.wbsDialogRepeated = true
-        session.beginDialog('wbsCode')
-      }
-      next()
   },function (session, results, next) {
-    if (results.response.entity === 'Yes') {
-          next()
-    } else {
-      if (!session.conversationData.wbsDialogRepeated) {
-        session.beginDialog('wbsCode')
-      }
-    }
-    next()
-  }, function (session, reulsts, next) {
-    console.log('Everything is confirmed, to send out mails!')
-    createRequest(session)
+      console.log('Everything is confirmed, ready to send out mails!')
+      createRequest(session)
   }
 ])
 
@@ -302,10 +283,30 @@ bot.dialog('getExactVisitDate', [
       if (dateGiven.getTime() - dateNow.getTime() <= 0) {
         session.send('The given date occurs in the past.')
         session.replaceDialog('getExactVisitDate');
-      } else {
-        session.conversationData.watsonContext.dateOfVisit =  dateOfVisit
-        session.endDialog()
       }
+  },function(session, results, next) {
+    dateOfVisit = dateFormat(dateOfVisit, 'yyyy-mm-dd HH:MM')
+    session.conversationData.watsonContext.dateOfVisit =  dateOfVisit
+  },function (session, results, next) {
+      //checkDateAvailability(utcDate, next)
+      fs.readFile('client_secret.json', function processClientSecrets(err, content) {
+        if (err) {
+          console.log('Error loading client secret file: ' + err);
+          return;
+        }
+        // Authorize a client with the loaded credentials, then call the
+        // Google Calendar API.
+        authorize(JSON.parse(content), isDateAvailable, session.conversationData.watsonContext.dateOfVisit, function(isClash) {
+            if (isClash) {
+              console.log('callbacking with true')
+              session.endDialog()
+            } else {
+              //builder.Prompts.text(session, 'That date is already booked, please try another.');
+              session.send('That date is already booked, please try another.')
+              session.replaceDialog('getExactVisitDate');
+            }
+        });
+      });
   }
 ])
 
@@ -463,7 +464,6 @@ bot.dialog('wbsCode', [
     if (results.response.entity === 'Yes')  {
       builder.Prompts.text(session, 'Please enter WBS:')
     } else {
-      session.conversationData.watsonContext.wbsCode = null
       session.endDialog()
     }
     next()
